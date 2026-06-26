@@ -3,10 +3,10 @@
 ## TL;DR
 
 1. **Export labeled images from Label Studio** (YOLO format: images/ + labels/ + classes.txt)
-2. **Train**: `python scripts/train.py export_folder --epochs 50`
-3. **Auto-label**: `python scripts/auto_label.py extracted_frames --version 1`
+2. **Train**: `python scripts/train.py export_folder --epochs 50 --device cpu`
+3. **Auto-label**: `python scripts/auto_label.py extracted_frames --version 1 --device cpu`
 4. **Review**: Import predictions.json into Label Studio → delete false positives
-5. **Retrain**: `python scripts/train.py reviewed_folder` (auto-increments to v2)
+5. **Retrain**: `python scripts/train.py reviewed_folder --device cpu` (auto-increments to v2)
 
 ---
 
@@ -14,47 +14,44 @@
 
 ```bash
 conda activate cartwatch
+pip install -r requirements.txt
 ```
 
 ---
 
-## Training a Model
+## Training a Model (Faster R-CNN + ResNet-50)
 
 ### Basic Training
 
 ```bash
 python scripts/train.py /path/to/label_studio_export \
-  --epochs 50
+  --epochs 50 \
+  --device cpu
 ```
 
-Creates: `models/checkpoints/yolo11n_v1/weights/best.pt`
+Creates: `models/checkpoints/fasterrcnn_resnet50_v1/best.pth`
 
 ### With Custom Settings
 
 ```bash
 python scripts/train.py /path/to/label_studio_export \
-  --model yolo11n \
   --epochs 100 \
-  --batch-size 32 \
-  --imgsz 1280 \
+  --batch-size 16 \
   --val-split 0.15 \
   --device cuda
 ```
 
 ### Check Training Results
 
-Ultralytics saves results in each checkpoint folder:
+Training saves checkpoints in each version folder:
 ```
-models/checkpoints/yolo11n_v1/
-├── weights/
-│   ├── best.pt        ← Use this for inference/auto-labeling
-│   └── last.pt
-├── results.csv        ← Training metrics
-├── args.yaml          ← Training config
-└── plots/             ← Training curves (detection_val_*.png)
+models/checkpoints/fasterrcnn_resnet50_v1/
+├── best.pth           ← Use this for inference/auto-labeling
+├── final.pth          ← Final checkpoint
+└── classes.txt        ← Class names (copied from export)
 ```
 
-Open the PNG plots in your browser to see training progress.
+Training logs print epoch loss to console.
 
 ---
 
@@ -64,9 +61,9 @@ Open the PNG plots in your browser to see training progress.
 
 ```bash
 python scripts/auto_label.py data/extracted_frames \
-  --model yolo11n \
   --version 1 \
-  --output data/labeled/predictions.json
+  --output data/labeled/predictions.json \
+  --device cpu
 ```
 
 Creates: `data/labeled/predictions.json` (Label Studio import format)
@@ -76,22 +73,24 @@ Creates: `data/labeled/predictions.json` (Label Studio import format)
 Lower confidence = catch more items (favor recall):
 ```bash
 python scripts/auto_label.py data/extracted_frames \
-  --model yolo11n --version 1 \
-  --confidence 0.15  # Very permissive
+  --version 1 \
+  --confidence 0.15 \
+  --device cpu
 ```
 
 Higher confidence = fewer false positives (favor precision):
 ```bash
 python scripts/auto_label.py data/extracted_frames \
-  --model yolo11n --version 1 \
-  --confidence 0.5   # More restrictive
+  --version 1 \
+  --confidence 0.5 \
+  --device cpu
 ```
 
 ### Use GPU
 
 ```bash
 python scripts/auto_label.py data/extracted_frames \
-  --model yolo11n --version 1 \
+  --version 1 \
   --device cuda
 ```
 

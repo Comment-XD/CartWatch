@@ -7,9 +7,9 @@ from src.utils.paths import get_project_root
 
 @dataclass
 class DetectorConfig:
-    """Configuration for YOLO detector."""
+    """Configuration for Faster R-CNN detector."""
 
-    model_name: str = "yolo11n"
+    model_name: str = "fasterrcnn_resnet50"
     confidence_threshold: float = 0.5
     device: str = "cpu"
 

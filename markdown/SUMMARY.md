@@ -11,8 +11,7 @@ A fully functional inventory detection system has been built following the CartW
 Created `cartwatch` conda environment with Python 3.12 and installed 30+ dependencies:
 
 **Core ML & Vision Libraries**
-- PyTorch 2.12.1 + torchvision for inference
-- Ultralytics YOLO 8.4.75 for object detection
+- PyTorch 2.3+ + torchvision for Faster R-CNN object detection
 - OpenCV 4.13.0 for video/image processing
 - scikit-image 0.26.0 for SSIM deduplication
 
@@ -32,8 +31,9 @@ Organized 22 Python modules into 6 functional packages:
 
 ### `src/core/` — Detection Core (3 modules)
 
-**`detector.py`: YOLODetector**
-- Wraps Ultralytics YOLO11 model
+**`detector.py`: FasterRCNNDetector**
+- Wraps torchvision Faster R-CNN with ResNet-50 backbone
+- Loads pretrained or custom-trained checkpoints (.pth files)
 - Loads model on specified device (CPU/CUDA)
 - Runs inference and returns normalized Detection objects
 - Handles bounding box normalization to [0, 1] range

@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 from typing import List, Tuple
 import numpy as np
-from ultralytics import YOLO
+import torch
+import torchvision.transforms as transforms
+from torchvision.models.detection import fasterrcnn_resnet50_fpn
 
 from src.utils.logging import get_logger
 
@@ -18,59 +20,79 @@ class Detection:
     bbox: Tuple[float, float, float, float]  # x1, y1, x2, y2 normalized
 
 
-class YOLODetector:
-    """YOLO11 object detector wrapper."""
+class FasterRCNNDetector:
+    """Faster R-CNN with ResNet-50 backbone detector wrapper."""
 
-    def __init__(self, model_name: str = "yolo11n", confidence_threshold: float = 0.5, device: str = "cpu"):
-        """Initialize YOLO detector.
+    def __init__(self, model_path: str = None, class_names: List[str] = None,
+                 confidence_threshold: float = 0.5, device: str = "cpu"):
+        """Initialize Faster R-CNN detector.
 
         Args:
-            model_name: YOLO model variant (yolo11n, yolo11s, yolo11m, etc.) or full path to .pt file
+            model_path: Path to trained model checkpoint (.pth file)
+            class_names: List of class names (required if using trained model)
             confidence_threshold: Detection confidence threshold
             device: Device to run on ('cpu' or 'cuda')
         """
-        self.model_name = model_name
+        self.model_path = model_path
+        self.class_names = class_names or ["object"]
         self.confidence_threshold = confidence_threshold
         self.device = device
 
-        weights_path = model_name if model_name.endswith(".pt") else f"{model_name}.pt"
-        logger.info(f"Loading {weights_path} on {device}...")
-        self.model = YOLO(weights_path)
-        self.model.to(device)
+        logger.info(f"Loading Faster R-CNN (ResNet-50) on {device}...")
+
+        num_classes = len(self.class_names) + 1  # +1 for background
+        self.model = fasterrcnn_resnet50_fpn(num_classes=num_classes)
+
+        if model_path:
+            checkpoint = torch.load(model_path, map_location=device)
+            self.model.load_state_dict(checkpoint)
+            logger.info(f"Loaded checkpoint from {model_path}")
+
+        self.model = self.model.to(device)
+        self.model.eval()
         logger.info("Model loaded successfully")
 
     def detect(self, frame: np.ndarray) -> List[Detection]:
         """Run detection on a single frame.
 
         Args:
-            frame: Input frame (BGR or RGB, H x W x 3)
+            frame: Input frame (BGR, H x W x 3)
 
         Returns:
             List of Detection objects
         """
-        results = self.model.predict(frame, conf=self.confidence_threshold, verbose=False)
+        h, w = frame.shape[:2]
+
+        # Convert BGR to RGB and normalize
+        rgb_frame = frame[..., ::-1]  # BGR to RGB
+        tensor = torch.from_numpy(rgb_frame).permute(2, 0, 1).float() / 255.0
+        tensor = tensor.to(self.device)
+
+        with torch.no_grad():
+            predictions = self.model([tensor])
+
         detections = []
+        if predictions and len(predictions) > 0:
+            pred = predictions[0]
+            boxes = pred['boxes'].cpu().numpy()
+            scores = pred['scores'].cpu().numpy()
+            labels = pred['labels'].cpu().numpy()
 
-        for result in results:
-            if result.boxes is not None:
-                for box in result.boxes:
-                    class_id = int(box.cls[0])
-                    class_name = self.model.names[class_id]
-                    confidence = float(box.conf[0])
+            for box, score, label in zip(boxes, scores, labels):
+                if score >= self.confidence_threshold:
+                    class_id = int(label) - 1  # Subtract 1 for background class
+                    if 0 <= class_id < len(self.class_names):
+                        x1, y1, x2, y2 = box
+                        bbox = (x1 / w, y1 / h, x2 / w, y2 / h)
 
-                    # Normalize bbox to [0, 1]
-                    h, w = frame.shape[:2]
-                    x1, y1, x2, y2 = box.xyxy[0].tolist()
-                    bbox = (x1 / w, y1 / h, x2 / w, y2 / h)
-
-                    detections.append(
-                        Detection(
-                            class_id=class_id,
-                            class_name=class_name,
-                            confidence=confidence,
-                            bbox=bbox,
+                        detections.append(
+                            Detection(
+                                class_id=class_id,
+                                class_name=self.class_names[class_id],
+                                confidence=float(score),
+                                bbox=bbox,
+                            )
                         )
-                    )
 
         return detections
 
@@ -88,9 +110,10 @@ class YOLODetector:
     def get_model_info(self) -> dict:
         """Get model metadata."""
         return {
-            "model_name": self.model_name,
-            "num_classes": len(self.model.names),
-            "class_names": self.model.names,
+            "model_name": "fasterrcnn_resnet50",
+            "num_classes": len(self.class_names),
+            "class_names": self.class_names,
             "confidence_threshold": self.confidence_threshold,
             "device": self.device,
+            "model_path": self.model_path,
         }

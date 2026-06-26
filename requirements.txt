@@ -1,6 +1,5 @@
 # Core ML & Vision
 opencv-python>=4.8.0
-ultralytics>=8.0.0
 torch>=2.3.0
 torchvision>=0.18.0
 

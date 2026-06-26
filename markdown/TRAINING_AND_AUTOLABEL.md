@@ -2,9 +2,9 @@
 
 ## Overview
 
-CartWatch now has a complete active learning pipeline for training YOLO models and generating Label Studio-compatible predictions. This enables the core workflow:
+CartWatch has a complete active learning pipeline for training Faster R-CNN models and generating Label Studio-compatible predictions. This enables the core workflow:
 
-**Manual Labels → Train YOLO v1 → Auto-Label New Frames → Human Review → Retrain YOLO v2 → Repeat**
+**Manual Labels → Train Faster R-CNN v1 → Auto-Label New Frames → Human Review → Retrain Faster R-CNN v2 → Repeat**
 
 ---
 

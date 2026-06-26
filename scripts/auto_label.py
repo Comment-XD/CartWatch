@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a trained YOLO checkpoint over unlabeled frames and produce Label Studio import JSON."""
+"""Run a trained Faster R-CNN checkpoint over unlabeled frames and produce Label Studio import JSON."""
 
 import argparse
 import sys
@@ -13,32 +13,32 @@ logger = get_logger(__name__)
 
 
 def resolve_checkpoint(model_name: str, version: int, model_dir: Path) -> Path:
-    """Resolve a (model_name, version) pair to a best.pt path.
+    """Resolve a (model_name, version) pair to a best.pth path.
 
     Args:
-        model_name: e.g. "yolo11n"
+        model_name: e.g. "fasterrcnn_resnet50"
         version: Checkpoint version number
         model_dir: models/ directory (config.paths.model_dir)
 
     Returns:
-        Path to models/checkpoints/<model_name>_v<version>/weights/best.pt
+        Path to models/checkpoints/<model_name>_v<version>/best.pth
 
     Raises:
-        FileNotFoundError: if the resolved best.pt doesn't exist
+        FileNotFoundError: if the resolved best.pth doesn't exist
     """
-    checkpoint_path = model_dir / "checkpoints" / f"{model_name}_v{version}" / "weights" / "best.pt"
+    checkpoint_path = model_dir / "checkpoints" / f"{model_name}_v{version}" / "best.pth"
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     return checkpoint_path
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Auto-label frames for Label Studio review")
+    parser = argparse.ArgumentParser(description="Auto-label frames with Faster R-CNN for Label Studio review")
     parser.add_argument("input", help="Directory of unlabeled image frames")
     parser.add_argument("--output", default="data/labeled/predictions.json", help="Output JSON path")
-    parser.add_argument("--model", default="yolo11n", help="Model name (matches checkpoint folder prefix)")
-    parser.add_argument("--version", type=int, default=None, help="Checkpoint version to use, e.g. 2 for yolo11n_v2")
-    parser.add_argument("--checkpoint", default=None, help="Explicit .pt path (overrides --model/--version)")
+    parser.add_argument("--model", default="fasterrcnn_resnet50", help="Model name (matches checkpoint folder prefix)")
+    parser.add_argument("--version", type=int, default=None, help="Checkpoint version to use, e.g. 2 for fasterrcnn_resnet50_v2")
+    parser.add_argument("--checkpoint", default=None, help="Explicit .pth path (overrides --model/--version)")
     parser.add_argument("--confidence", type=float, default=0.25, help="Confidence threshold")
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu", help="Device to use")
     parser.add_argument("--from-name", default="label", help="LS RectangleLabels tag name")

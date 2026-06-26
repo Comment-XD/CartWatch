@@ -1,24 +1,26 @@
-"""Auto-labeling with trained YOLO checkpoints for Label Studio review."""
+"""Auto-labeling with trained Faster R-CNN checkpoints for Label Studio review."""
 
 import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from src.core.detector import YOLODetector
+from src.core.detector import FasterRCNNDetector
 from src.inference.label_studio_format import build_ls_import_payload
 from src.ingestion.frame_iterator import ImageDirectoryIterator
+from src.training.dataset_builder import discover_class_names
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
 class AutoLabeler:
-    """Run a trained YOLO checkpoint over unlabeled frames and produce
+    """Run a trained Faster R-CNN checkpoint over unlabeled frames and produce
     Label Studio prediction-import JSON for human review."""
 
     def __init__(
         self,
         checkpoint_path: str,
+        class_names: List[str] = None,
         confidence_threshold: float = 0.25,
         device: str = "cpu",
         from_name: str = "label",
@@ -27,16 +29,29 @@ class AutoLabeler:
         """Initialize auto-labeler with a custom-trained checkpoint.
 
         Args:
-            checkpoint_path: Full path to a .pt file, e.g.
-                             models/checkpoints/yolo11n_v2/weights/best.pt
+            checkpoint_path: Full path to a .pth file, e.g.
+                             models/checkpoints/fasterrcnn_resnet50_v2/best.pth
+            class_names: List of class names (if not provided, attempt to load from checkpoint dir)
             confidence_threshold: Detection confidence threshold
                                   (lower than inference default 0.5 favors recall)
             device: 'cpu' or 'cuda'
             from_name: RectangleLabels tag name in LS labeling config
             to_name: Image tag name in LS labeling config
         """
-        self.detector = YOLODetector(
-            model_name=checkpoint_path,
+        # Try to load class names from checkpoint directory if not provided
+        if class_names is None:
+            checkpoint_dir = Path(checkpoint_path).parent.parent
+            if (checkpoint_dir / "classes.txt").exists():
+                with open(checkpoint_dir / "classes.txt") as f:
+                    class_names = [line.strip() for line in f]
+                logger.info(f"Loaded {len(class_names)} classes from {checkpoint_dir / 'classes.txt'}")
+            else:
+                logger.warning(f"Could not find classes.txt in {checkpoint_dir}, using default")
+                class_names = ["object"]
+
+        self.detector = FasterRCNNDetector(
+            model_path=checkpoint_path,
+            class_names=class_names,
             confidence_threshold=confidence_threshold,
             device=device,
         )
@@ -48,7 +63,7 @@ class AutoLabeler:
         """Run detection over every image in a directory and build LS tasks.
 
         Walks ImageDirectoryIterator directly (not DetectionPipeline) so that
-        the original file path survives into the output. Runs YOLODetector.detect()
+        the original file path survives into the output. Runs FasterRCNNDetector.detect()
         on raw loaded frames (no FrameNormalizer resize) so predicted boxes map
         directly to original image dimensions for Label Studio.
 
