@@ -2,12 +2,12 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision.models.detection import fasterrcnn_resnet50_fpn
-from torchvision.transforms import functional as F
 import cv2
+import mlflow
 
 from src.config import Config
 from src.training.checkpoint_manager import allocate_version_dir
@@ -15,6 +15,8 @@ from src.training.dataset_builder import (
     discover_class_names,
     split_dataset,
 )
+from src.training.evaluator import FasterRCNNEvaluator
+from src.training.azure_ml_config import log_training_hyperparams, log_training_metrics
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -110,6 +112,7 @@ class FasterRCNNTrainer:
         self,
         export_dir: str,
         model_name: Optional[str] = None,
+        enable_mlflow: bool = True,
     ) -> TrainingRunResult:
         """Train Faster R-CNN on a Label Studio YOLO export, auto-splitting train/val.
 
@@ -117,6 +120,7 @@ class FasterRCNNTrainer:
             export_dir: Path to Label Studio YOLO export root
                         (contains images/, labels/, classes.txt)
             model_name: Model identifier (defaults to fasterrcnn_resnet50)
+            enable_mlflow: Whether to log metrics to MLflow (default: True)
 
         Returns:
             TrainingRunResult with version number, checkpoint paths, metrics
@@ -155,6 +159,18 @@ class FasterRCNNTrainer:
             f"batch_size={self.config.training.batch_size}"
         )
 
+        # Log hyperparameters to MLflow
+        if enable_mlflow:
+            log_training_hyperparams(
+                epochs=self.config.training.epochs,
+                batch_size=self.config.training.batch_size,
+                learning_rate=0.005,
+                val_split=self.config.training.val_split,
+                device=self.config.training.device,
+                model_name=model_name_to_use,
+                seed=self.config.training.seed,
+            )
+
         # Create datasets
         train_dataset = FasterRCNNDataset(train_imgs, train_labels)
         val_dataset = FasterRCNNDataset(val_imgs, val_labels)
@@ -163,6 +179,14 @@ class FasterRCNNTrainer:
             train_dataset,
             batch_size=self.config.training.batch_size,
             shuffle=True,
+            num_workers=0,
+            collate_fn=lambda x: x,
+        )
+
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=self.config.training.batch_size,
+            shuffle=False,
             num_workers=0,
             collate_fn=lambda x: x,
         )
@@ -181,8 +205,17 @@ class FasterRCNNTrainer:
             weight_decay=0.0005,
         )
 
+        # Create evaluator
+        evaluator = FasterRCNNEvaluator(
+            model=model,
+            device=self.config.training.device,
+            confidence_threshold=0.5,
+        )
+
         # Training loop
         best_loss = float('inf')
+        loss_history = {"train": [], "val": []}
+
         for epoch in range(self.config.training.epochs):
             model.train()
             epoch_loss = 0.0
@@ -206,13 +239,39 @@ class FasterRCNNTrainer:
                 num_batches += 1
 
             avg_loss = epoch_loss / num_batches
-            logger.info(f"Epoch {epoch + 1}/{self.config.training.epochs}, Loss: {avg_loss:.4f}")
+            loss_history["train"].append(avg_loss)
 
+            logger.info(f"Epoch {epoch + 1}/{self.config.training.epochs}, Train Loss: {avg_loss:.4f}")
+
+            # Validation and metrics
+            if (epoch + 1) % max(1, self.config.training.epochs // 10) == 0:
+                val_metrics = evaluator.evaluate(
+                    val_loader,
+                    class_names,
+                    save_plots=True,
+                    plots_dir=version_dir / "plots" / f"epoch_{epoch + 1}",
+                )
+
+                # Log validation metrics to MLflow
+                if enable_mlflow:
+                    log_training_metrics(
+                        epoch=epoch,
+                        total_loss=avg_loss,
+                    )
+                    for metric_name, metric_value in val_metrics.items():
+                        if isinstance(metric_value, (int, float)):
+                            mlflow.log_metric(f"val/{metric_name}", metric_value, step=epoch)
+
+            # Save best checkpoint based on loss
             if avg_loss < best_loss:
                 best_loss = avg_loss
                 best_pth = version_dir / "best.pth"
                 torch.save(model.state_dict(), best_pth)
-                logger.info(f"Saved best checkpoint: {best_pth}")
+                logger.info(f"Saved best checkpoint: {best_pth} (loss: {avg_loss:.4f})")
+
+                # Log artifact to MLflow
+                if enable_mlflow:
+                    mlflow.log_artifact(str(best_pth), "checkpoints")
 
         # Save final checkpoint
         final_pth = version_dir / "final.pth"
@@ -224,6 +283,27 @@ class FasterRCNNTrainer:
         logger.info(f"  Val images: {len(val_imgs)}")
         logger.info(f"  Classes: {class_names}")
         logger.info(f"  Best checkpoint: {best_pth}")
+
+        # Final evaluation and MLflow logging
+        if enable_mlflow:
+            final_metrics = evaluator.evaluate(
+                val_loader,
+                class_names,
+                save_plots=True,
+                plots_dir=version_dir / "plots" / "final",
+            )
+            for metric_name, metric_value in final_metrics.items():
+                if isinstance(metric_value, (int, float)):
+                    mlflow.log_metric(f"final/{metric_name}", metric_value)
+
+            # Log params and model
+            mlflow.set_tag("version", version)
+            mlflow.set_tag("model_name", model_name_to_use)
+            mlflow.log_params({
+                "num_classes": len(class_names),
+                "train_images": len(train_imgs),
+                "val_images": len(val_imgs),
+            })
 
         return TrainingRunResult(
             version=version,
